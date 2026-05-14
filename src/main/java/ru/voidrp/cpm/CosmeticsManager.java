@@ -11,9 +11,10 @@ import java.util.*;
 
 public class CosmeticsManager {
     private static final Logger LOGGER = LoggerFactory.getLogger("VoidRpCpm");
+    private static final String WARDROBE_FILE = "wardrobe.cpmmodel";
 
     private final File modelsDir;
-    private final Map<String, ModelFile> models = new LinkedHashMap<>();
+    private ModelFile wardrobeModel;
     private ICommonAPI api;
 
     public CosmeticsManager() {
@@ -25,46 +26,82 @@ public class CosmeticsManager {
         this.api = api;
     }
 
-    public void loadModels() {
-        models.clear();
-        File[] files = modelsDir.listFiles(
-            (dir, name) -> name.endsWith(".cpmmodel") || name.endsWith(".cpm")
-        );
-        if (files == null) return;
-        for (File f : files) {
-            String name = f.getName().replaceAll("\\.(cpmmodel|cpm)$", "");
-            try (InputStream is = new FileInputStream(f)) {
-                models.put(name, ModelFile.load(is));
-                LOGGER.info("[VoidRpCpm] Loaded model: {}", name);
-            } catch (IOException e) {
-                LOGGER.error("[VoidRpCpm] Failed to load {}: {}", f.getName(), e.getMessage());
-            }
+    public void loadWardrobe() {
+        wardrobeModel = null;
+        File f = new File(modelsDir, WARDROBE_FILE);
+        if (!f.exists()) {
+            LOGGER.warn("[VoidRpCpm] wardrobe.cpmmodel not found in config/voidrp-cpm/models/ — cosmetics will not apply");
+            return;
+        }
+        try (InputStream is = new FileInputStream(f)) {
+            wardrobeModel = ModelFile.load(is);
+            LOGGER.info("[VoidRpCpm] Loaded wardrobe model");
+        } catch (IOException e) {
+            LOGGER.error("[VoidRpCpm] Failed to load wardrobe.cpmmodel: {}", e.getMessage());
         }
     }
 
-    public int getModelCount() { return models.size(); }
-    public Set<String> getModelNames() { return Collections.unmodifiableSet(models.keySet()); }
-    public boolean hasModel(String name) { return models.containsKey(name); }
-
-    public boolean applyCosmetic(ServerPlayer player, String name) {
-        if (api == null || !models.containsKey(name)) return false;
-        api.setPlayerModel(ServerPlayer.class, player, models.get(name), true);
-        return true;
+    public boolean isReady() {
+        return api != null && wardrobeModel != null;
     }
 
-    public void resetCosmetic(ServerPlayer player) {
-        if (api == null) return;
-        api.resetPlayerModel(ServerPlayer.class, player);
-    }
-
+    // Apply wardrobe model + re-enable all equipped layers
     public void applyOnLogin(ServerPlayer player, PlayerDataStore store) {
         if (api == null) return;
         String uuid = player.getStringUUID();
-        String active = store.getActive(uuid);
-        if (active != null && store.ownsCosmetic(uuid, active) && models.containsKey(active)) {
-            applyCosmetic(player, active);
-        } else {
-            resetCosmetic(player);
+        Map<String, String> slots = store.getSlots(uuid);
+
+        if (slots.isEmpty() || wardrobeModel == null) {
+            api.resetPlayerModel(ServerPlayer.class, player);
+            return;
         }
+
+        api.setPlayerModel(ServerPlayer.class, player, wardrobeModel, true);
+
+        // Re-activate equipped layers
+        for (String item : slots.values()) {
+            api.playAnimation(ServerPlayer.class, player, item, 1);
+        }
+    }
+
+    // Equip item into its slot — disables old item in same slot first
+    public boolean equip(ServerPlayer player, String itemName, String slot, PlayerDataStore store) {
+        if (!isReady()) return false;
+        String uuid = player.getStringUUID();
+
+        // Apply wardrobe model if not yet applied (first cosmetic ever)
+        api.setPlayerModel(ServerPlayer.class, player, wardrobeModel, true);
+
+        // Disable current item in this slot if any
+        String current = store.getSlotItem(uuid, slot);
+        if (current != null) {
+            api.playAnimation(ServerPlayer.class, player, current, 0);
+        }
+
+        // Enable new item
+        api.playAnimation(ServerPlayer.class, player, itemName, 1);
+        store.equip(uuid, slot, itemName);
+        return true;
+    }
+
+    // Unequip slot — hide the layer
+    public boolean unequip(ServerPlayer player, String slot, PlayerDataStore store) {
+        if (api == null) return false;
+        String uuid = player.getStringUUID();
+        String current = store.getSlotItem(uuid, slot);
+        if (current == null) return false;
+
+        api.playAnimation(ServerPlayer.class, player, current, 0);
+        store.unequip(uuid, slot);
+
+        // If no more slots equipped, reset model
+        if (store.getSlots(uuid).isEmpty()) {
+            api.resetPlayerModel(ServerPlayer.class, player);
+        }
+        return true;
+    }
+
+    public void resetPlayer(ServerPlayer player) {
+        if (api != null) api.resetPlayerModel(ServerPlayer.class, player);
     }
 }

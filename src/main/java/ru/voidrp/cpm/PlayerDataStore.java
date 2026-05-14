@@ -17,7 +17,8 @@ public class PlayerDataStore {
 
     public static class Entry {
         public Set<String> owned = new HashSet<>();
-        public String active = null;
+        // slot -> currently equipped item name
+        public Map<String, String> slots = new HashMap<>();
     }
 
     private final File dataFile;
@@ -52,9 +53,9 @@ public class PlayerDataStore {
         return data.computeIfAbsent(uuid, k -> new Entry());
     }
 
-    public synchronized boolean ownsCosmetic(String uuid, String cosmetic) {
+    public synchronized boolean ownsCosmetic(String uuid, String item) {
         Entry e = data.get(uuid);
-        return e != null && e.owned.contains(cosmetic);
+        return e != null && e.owned.contains(item);
     }
 
     public synchronized Set<String> getOwned(String uuid) {
@@ -62,31 +63,36 @@ public class PlayerDataStore {
         return e == null ? Collections.emptySet() : Collections.unmodifiableSet(e.owned);
     }
 
-    public synchronized String getActive(String uuid) {
+    public synchronized Map<String, String> getSlots(String uuid) {
         Entry e = data.get(uuid);
-        return e == null ? null : e.active;
+        return e == null ? Collections.emptyMap() : Collections.unmodifiableMap(e.slots);
     }
 
-    public synchronized void grant(String uuid, String cosmetic) {
-        getOrCreate(uuid).owned.add(cosmetic);
+    public synchronized String getSlotItem(String uuid, String slot) {
+        Entry e = data.get(uuid);
+        return e == null ? null : e.slots.get(slot);
+    }
+
+    public synchronized void grant(String uuid, String item) {
+        getOrCreate(uuid).owned.add(item);
         save();
     }
 
-    public synchronized void revoke(String uuid, String cosmetic) {
+    public synchronized void revoke(String uuid, String item) {
         Entry e = data.get(uuid);
         if (e == null) return;
-        e.owned.remove(cosmetic);
-        if (cosmetic.equals(e.active)) e.active = null;
+        e.owned.remove(item);
+        e.slots.values().removeIf(v -> v.equals(item));
         save();
     }
 
-    public synchronized void setActive(String uuid, String cosmetic) {
-        getOrCreate(uuid).active = cosmetic;
+    public synchronized void equip(String uuid, String slot, String item) {
+        getOrCreate(uuid).slots.put(slot, item);
         save();
     }
 
-    public synchronized void clearActive(String uuid) {
+    public synchronized void unequip(String uuid, String slot) {
         Entry e = data.get(uuid);
-        if (e != null) { e.active = null; save(); }
+        if (e != null) { e.slots.remove(slot); save(); }
     }
 }
